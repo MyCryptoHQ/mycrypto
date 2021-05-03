@@ -12,6 +12,7 @@ import { persistenceSaga } from './persistence.slice';
 import { ratesSaga } from './rates.slice';
 import { importSaga } from './root.reducer';
 import { settingsSaga } from './settings.slice';
+import { signerSaga } from './signer.slice';
 import { scanTokensSaga } from './tokenScanning.slice';
 
 export default function* rootSaga() {
@@ -27,6 +28,7 @@ export default function* rootSaga() {
     analyticsSaga(),
     persistenceSaga(),
     pollingSaga(),
-    ratesSaga()
+    ratesSaga(),
+    signerSaga()
   ]);
 }

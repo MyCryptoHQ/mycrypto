@@ -1,4 +1,5 @@
 import {
+  DesktopSignerUnlock,
   LedgerDecrypt,
   TrezorUnlock,
   ViewOnlyDecrypt,
@@ -30,6 +31,10 @@ export const getStories = (): IStory[] => [
   {
     name: WalletId.TREZOR_NEW,
     steps: [NetworkSelectPanel, TrezorUnlock]
+  },
+  {
+    name: WalletId.DESKTOP_SIGNER,
+    steps: [NetworkSelectPanel, DesktopSignerUnlock]
   },
   {
     name: WalletId.VIEW_ONLY,
