@@ -1,16 +1,16 @@
 import { KeyboardEvent, useEffect, useState } from 'react';
 
-import BN from 'bn.js';
-import { addHexPrefix } from 'ethereumjs-util';
 import styled from 'styled-components';
 
 import { Checkbox, InputField, Typography } from '@components';
 import { getWalletConfig } from '@config';
-import { fetchGasPriceEstimates, getGasEstimate, getNonce } from '@services';
+import { fetchUniversalGasPriceEstimate, getGasEstimate } from '@services/ApiService/Gas';
+import { getNonce } from '@services/EthService';
 import { COLORS, monospace } from '@theme';
 import translate, { translateRaw } from '@translations';
-import { StoreAccount } from '@types';
-import { hexWeiToString, inputGasPriceToHex } from '@utils';
+import { ISimpleTxForm, Network, StoreAccount } from '@types';
+import { inputGasPriceToHex, inputNonceToHex } from '@utils';
+import { mapObjIndexed } from '@vendor';
 
 const { GREY_LIGHTER } = COLORS;
 
@@ -36,24 +36,32 @@ const FieldWrapper = styled.div`
 
 interface Props {
   gasPrice: string;
+  maxFeePerGas: string;
+  maxPriorityFeePerGas: string;
   gasLimit: string;
   nonce: string;
   account: StoreAccount;
+  network: Network;
   estimateGasCallProps: TObject;
-  setGasPrice(gasPrice: string): void;
+  setGasPrice(
+    gas: Partial<Pick<ISimpleTxForm, 'gasPrice' | 'maxFeePerGas' | 'maxPriorityFeePerGas'>>
+  ): void;
   setGasLimit(gasLimit: string): void;
   setNonce(nonce: string): void;
 }
 
 export default function GasSelector({
   gasPrice,
+  maxFeePerGas,
+  maxPriorityFeePerGas,
   gasLimit,
   nonce,
   setGasPrice,
   setGasLimit,
   setNonce,
   estimateGasCallProps,
-  account
+  account,
+  network
 }: Props) {
   const [isAutoGasSet, setIsAutoGasSet] = useState(true);
 
@@ -70,17 +78,26 @@ export default function GasSelector({
     setIsAutoGasSet(!isAutoGasSet);
   };
 
-  const handleGasPriceChange = (e: KeyboardEvent<HTMLInputElement>) => {
-    setGasPrice((e.target as HTMLTextAreaElement).value);
-  };
+  const handleGasPriceChange = (e: KeyboardEvent<HTMLInputElement>) =>
+    setGasPrice({
+      gasPrice: (e.target as HTMLTextAreaElement).value
+    });
 
-  const handleGasLimitChange = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleMaxGasPerFeeChange = (e: KeyboardEvent<HTMLInputElement>) =>
+    setGasPrice({
+      maxFeePerGas: (e.target as HTMLTextAreaElement).value
+    });
+
+  const handleMaxPriorityFeePerGasChange = (e: KeyboardEvent<HTMLInputElement>) =>
+    setGasPrice({
+      maxPriorityFeePerGas: (e.target as HTMLTextAreaElement).value
+    });
+
+  const handleGasLimitChange = (e: KeyboardEvent<HTMLInputElement>) =>
     setGasLimit((e.target as HTMLTextAreaElement).value);
-  };
 
-  const handleNonceChange = (e: KeyboardEvent<HTMLInputElement>) => {
+  const handleNonceChange = (e: KeyboardEvent<HTMLInputElement>) =>
     setNonce((e.target as HTMLTextAreaElement).value);
-  };
 
   const estimateGas = async () => {
     if (!account) {
@@ -89,15 +106,19 @@ export default function GasSelector({
 
     try {
       const { network } = account;
-      const { fast } = await fetchGasPriceEstimates(network);
-      setGasPrice(fast.toString());
-      const fetchedGasPrice = hexWeiToString(inputGasPriceToHex(fast.toString()));
+      const gas = await fetchUniversalGasPriceEstimate(network);
+      setGasPrice({
+        gasPrice: gas.gasPrice ?? '',
+        maxFeePerGas: gas.maxFeePerGas ?? '',
+        maxPriorityFeePerGas: gas.maxPriorityFeePerGas ?? ''
+      });
+      const txGas = mapObjIndexed((v) => v && inputGasPriceToHex(v), gas);
       const fetchedNonce = await getNonce(network, account.address);
       setNonce(fetchedNonce.toString());
 
       const txConfig: any = Object.assign({}, estimateGasCallProps, {
-        gasPrice: addHexPrefix(new BN(fetchedGasPrice).toString(16)),
-        nonce: fetchedNonce,
+        ...txGas,
+        nonce: inputNonceToHex(fetchedNonce.toString()),
         chainId: network.chainId
       });
       const fetchedGasLimit = await getGasEstimate(network, txConfig);
@@ -115,16 +136,41 @@ export default function GasSelector({
         name="autoGasSet"
         label={translateRaw('TRANS_AUTO_GAS_TOGGLE')}
       />
+      {network.supportsEIP1559 ? (
+        <>
+          <FieldWrapper>
+            <InputField
+              name="maxFeePerGas"
+              label={<CustomLabel>{translateRaw('MAX_FEE_PER_GAS')}</CustomLabel>}
+              value={maxFeePerGas}
+              onChange={handleMaxGasPerFeeChange}
+              inputMode="decimal"
+            />
+          </FieldWrapper>
+          <FieldWrapper>
+            <InputField
+              name="maxPriorityFeePerGas"
+              label={<CustomLabel>{translateRaw('MAX_PRIORITY_FEE')}</CustomLabel>}
+              value={maxPriorityFeePerGas}
+              onChange={handleMaxPriorityFeePerGasChange}
+              inputMode="decimal"
+            />
+          </FieldWrapper>
+        </>
+      ) : (
+        <FieldWrapper>
+          <InputField
+            name="gasPrice"
+            label={<CustomLabel>{translateRaw('OFFLINE_STEP2_LABEL_3')}</CustomLabel>}
+            value={gasPrice}
+            onChange={handleGasPriceChange}
+            inputMode="decimal"
+          />
+        </FieldWrapper>
+      )}
       <FieldWrapper>
         <InputField
-          label={<CustomLabel>{translateRaw('OFFLINE_STEP2_LABEL_3')}</CustomLabel>}
-          value={gasPrice}
-          onChange={handleGasPriceChange}
-          inputMode="decimal"
-        />
-      </FieldWrapper>
-      <FieldWrapper>
-        <InputField
+          name="gasLimit"
           label={<CustomLabel>{translateRaw('OFFLINE_STEP2_LABEL_4')}</CustomLabel>}
           value={gasLimit}
           onChange={handleGasLimitChange}
@@ -134,6 +180,7 @@ export default function GasSelector({
       </FieldWrapper>
       <FieldWrapper>
         <InputField
+          name="nonce"
           label={<CustomLabel>{translateRaw('OFFLINE_STEP2_LABEL_5')}</CustomLabel>}
           value={nonce}
           onChange={handleNonceChange}

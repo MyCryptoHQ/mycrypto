@@ -20,18 +20,19 @@ import { getFiat } from '@config/fiats';
 import { ProtectTxAbort } from '@features/ProtectTransaction/components/ProtectTxAbort';
 import { ProtectTxContext } from '@features/ProtectTransaction/ProtectTxProvider';
 import { makeFinishedTxReceipt } from '@helpers';
-import {
-  fetchGasPriceEstimates,
-  getAssetByContractAndNetwork,
-  useAssets,
-  useRates
-} from '@services';
+import { getAssetByContractAndNetwork, useAssets, useRates } from '@services';
 import {
   getTimestampFromBlockNum,
   getTransactionReceiptFromHash,
   ProviderHandler
 } from '@services/EthService';
-import { getStoreAccount, useAccounts, useContacts, useSettings } from '@services/Store';
+import {
+  getStoreAccount,
+  useAccounts,
+  useContacts,
+  useNetworks,
+  useSettings
+} from '@services/Store';
 import { getStoreAccounts, useSelector } from '@store';
 import { BREAK_POINTS, COLORS } from '@theme';
 import translate, { translateRaw } from '@translations';
@@ -46,11 +47,12 @@ import {
   ITxReceiptStepProps,
   ITxStatus,
   ITxType,
+  Network,
   TAddress,
   TxQueryTypes,
   WalletId
 } from '@types';
-import { bigify, buildTxUrl, isWeb3Wallet, truncate } from '@utils';
+import { buildTxUrl, isWeb3Wallet, truncate } from '@utils';
 import { constructCancelTxQuery, constructSpeedUpTxQuery } from '@utils/queries';
 import { path } from '@vendor';
 
@@ -91,6 +93,7 @@ const SSpacer = styled.div`
 const TxReceipt = ({
   txReceipt,
   txConfig,
+  signedTx,
   txQueryType,
   completeButton,
   customComponent,
@@ -108,12 +111,14 @@ const TxReceipt = ({
   const { assets } = useAssets();
   const accounts = useSelector(getStoreAccounts);
   const { settings } = useSettings();
+  const { getNetworkById } = useNetworks();
   const [txStatus, setTxStatus] = useState(
     txReceipt ? txReceipt.status : (ITxStatus.PENDING as ITxHistoryStatus)
   );
   const [displayTxReceipt, setDisplayTxReceipt] = useState<ITxReceipt | undefined>(txReceipt);
-  const [blockNumber, setBlockNumber] = useState(0);
-  const [timestamp, setTimestamp] = useState(0);
+  const [blockNumber, setBlockNumber] = useState(txReceipt?.blockNumber ?? 0);
+  const [timestamp, setTimestamp] = useState(txReceipt?.timestamp ?? 0);
+  const network = getNetworkById(txConfig.networkId);
 
   // Imported in this way to handle errors where the context is missing, f.x. in Swap Flow
   const { state: ptxState } = useContext(ProtectTxContext);
@@ -126,7 +131,7 @@ const TxReceipt = ({
 
   useEffect(() => {
     if (displayTxReceipt && blockNumber === 0 && displayTxReceipt.hash) {
-      const provider = new ProviderHandler(txConfig.network);
+      const provider = new ProviderHandler(network);
       const blockNumInterval = setInterval(() => {
         getTransactionReceiptFromHash(displayTxReceipt.hash, provider).then(
           (transactionOutcome) => {
@@ -158,11 +163,11 @@ const TxReceipt = ({
   });
   useEffect(() => {
     if (displayTxReceipt && timestamp === 0 && blockNumber !== 0) {
-      const provider = new ProviderHandler(txConfig.network);
+      const provider = new ProviderHandler(network);
       const timestampInterval = setInterval(() => {
         getTimestampFromBlockNum(blockNumber, provider).then((transactionTimestamp) => {
           if (txReceipt && txReceipt.txType === ITxType.FAUCET) {
-            const recipientAccount = getStoreAccount(accounts)(txReceipt.to, txConfig.network.id);
+            const recipientAccount = getStoreAccount(accounts)(txReceipt.to, network.id);
             if (recipientAccount) {
               addTxToAccount(recipientAccount, {
                 ...displayTxReceipt,
@@ -205,45 +210,38 @@ const TxReceipt = ({
 
   const handleTxSpeedUpRedirect = async () => {
     if (!txConfig) return;
-    const { fast } = await fetchGasPriceEstimates(txConfig.network);
     const query = constructSpeedUpTxQuery(
       txConfig,
-      calculateReplacementGasPrice(txConfig, bigify(fast))
+      await calculateReplacementGasPrice(txConfig, network)
     );
     history.replace(`${ROUTE_PATHS.SEND.path}/?${query}`);
   };
 
   const handleTxCancelRedirect = async () => {
     if (!txConfig) return;
-    const { fast } = await fetchGasPriceEstimates(txConfig.network);
     const query = constructCancelTxQuery(
       txConfig,
-      calculateReplacementGasPrice(txConfig, bigify(fast))
+      await calculateReplacementGasPrice(txConfig, network)
     );
     history.replace(`${ROUTE_PATHS.SEND.path}/?${query}`);
   };
 
   const sender = constructSenderFromTxConfig(txConfig, accounts);
 
-  const senderContact = getContactByAddressAndNetworkId(sender.address, txConfig.network.id);
+  const senderContact = getContactByAddressAndNetworkId(sender.address, network.id);
 
-  const recipientContact = getContactByAddressAndNetworkId(
-    txConfig.receiverAddress,
-    txConfig.network.id
-  );
+  const recipientContact =
+    txConfig.receiverAddress &&
+    getContactByAddressAndNetworkId(txConfig.receiverAddress, network.id);
 
   const contractName = (() => {
-    const contact = getContactByAddressAndNetworkId(
-      txConfig.rawTransaction.to,
-      txConfig.network.id
-    );
+    const contact =
+      txConfig.rawTransaction.to &&
+      getContactByAddressAndNetworkId(txConfig.rawTransaction.to, network.id);
     if (contact) {
       return contact.label;
     }
-    const asset = getAssetByContractAndNetwork(
-      txConfig.rawTransaction.to,
-      txConfig.network
-    )(assets);
+    const asset = getAssetByContractAndNetwork(txConfig.rawTransaction.to, network)(assets);
     return asset && asset.name;
   })();
 
@@ -278,6 +276,8 @@ const TxReceipt = ({
       handleTxCancelRedirect={handleTxCancelRedirect}
       handleTxSpeedUpRedirect={handleTxSpeedUpRedirect}
       txType={txType}
+      network={network}
+      signedTx={signedTx}
     />
   );
 };
@@ -304,6 +304,7 @@ export interface TxReceiptDataProps {
   completeButton?: string | (() => JSX.Element);
   protectTxButton?(): JSX.Element;
   customComponent?(): JSX.Element;
+  network: Network;
 }
 
 type UIProps = Omit<IStepComponentProps, 'resetFlow' | 'onComplete'> & TxReceiptDataProps;
@@ -312,6 +313,7 @@ export const TxReceiptUI = ({
   settings,
   txType,
   txConfig,
+  signedTx,
   txStatus,
   timestamp,
   assetRate,
@@ -332,18 +334,11 @@ export const TxReceiptUI = ({
   handleTxSpeedUpRedirect,
   protectTxEnabled = false,
   queryStringsDisabled = false,
-  protectTxButton
+  protectTxButton,
+  network
 }: UIProps) => {
-  const {
-    asset,
-    gasPrice,
-    gasLimit,
-    data,
-    nonce,
-    baseAsset,
-    receiverAddress,
-    rawTransaction
-  } = txConfig;
+  const { asset, baseAsset, receiverAddress, rawTransaction } = txConfig;
+  const { data, gasLimit, nonce } = rawTransaction;
 
   const walletConfig = getWalletConfig(sender.account ? sender.account.wallet : WalletId.VIEW_ONLY);
   const web3Wallet = isWeb3Wallet(walletConfig.id);
@@ -370,7 +365,7 @@ export const TxReceiptUI = ({
     if (displayTxReceipt && path(['gasUsed'], displayTxReceipt)) {
       return displayTxReceipt.gasUsed!.toString();
     } else {
-      return txConfig.gasLimit;
+      return txConfig.rawTransaction.gasLimit;
     }
   }, [displayTxReceipt]);
 
@@ -396,7 +391,7 @@ export const TxReceiptUI = ({
         </div>
       )}
       <FromToAccount
-        networkId={sender.network.id}
+        networkId={sender.networkId}
         fromAccount={{
           address: (sender.address || (displayTxReceipt && displayTxReceipt.from)) as TAddress,
           addressBookEntry: senderContact
@@ -410,7 +405,7 @@ export const TxReceiptUI = ({
 
       {/* CONTRACT BOX */}
 
-      {isContractCall && (
+      {rawTransaction.to && isContractCall && (
         <div className="TransactionReceipt-row">
           <TxIntermediaryDisplay address={rawTransaction.to} contractName={contractName} />
         </div>
@@ -432,7 +427,7 @@ export const TxReceiptUI = ({
         assetRate={assetRate}
         baseAssetRate={baseAssetRate}
         settings={settings}
-        gasPrice={gasPrice}
+        rawTransaction={rawTransaction}
         gasUsed={gasAmount()}
         value={rawTransaction.value}
       />
@@ -464,11 +459,11 @@ export const TxReceiptUI = ({
               {translate('TX_HASH')}
               {': '}
               <Body as="span" fontWeight="normal">
-                {displayTxReceipt && txConfig.network && txConfig.network.blockExplorer && (
+                {displayTxReceipt && network && network.blockExplorer && (
                   <Box display="inline-flex" variant="rowAlign" color={COLORS.BLUE_GREY}>
                     <Text as="span">{truncate(displayTxReceipt.hash)}</Text>
                     <LinkApp
-                      href={buildTxUrl(txConfig.network.blockExplorer, displayTxReceipt.hash)}
+                      href={buildTxUrl(network.blockExplorer, displayTxReceipt.hash)}
                       isExternal={true}
                       variant="opacityLink"
                       display="inline-flex"
@@ -494,7 +489,6 @@ export const TxReceiptUI = ({
           data={data}
           sender={sender}
           gasLimit={gasLimit}
-          gasPrice={gasPrice}
           nonce={nonce}
           rawTransaction={txConfig.rawTransaction}
           value={rawTransaction.value}
@@ -504,6 +498,8 @@ export const TxReceiptUI = ({
           status={txStatus}
           timestamp={timestamp}
           recipient={rawTransaction.to}
+          network={network}
+          signedTransaction={signedTx}
         />
       </div>
       {completeButton && !(txStatus === ITxStatus.PENDING) && (
